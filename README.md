@@ -24,7 +24,7 @@ Only use touchHLE to emulate software you have obtained legally.
 
 ## Platform support
 
-* Officially supported: x64 Windows, x64 macOS, AArch64 macOS and AArch64 Android.
+* "Officially" supported: x64 Windows, x64 macOS, AArch64 macOS and AArch64 Android.
   * These are the platforms with binary releases.
 * Probably works, but you must build it yourself: x64 Linux, AArch64 Linux.
 * Never?: other architectures.
