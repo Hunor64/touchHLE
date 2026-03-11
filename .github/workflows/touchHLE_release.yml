@@ -5,33 +5,39 @@ on:
     branches: [ "trunk" ]
   pull_request:
     branches: [ "trunk" ]
-  workflow_dispatch: 
+  workflow_dispatch:
+  create: # for tags
 
 env:
   CARGO_TERM_COLOR: always
-  # Fixes the SDL2 build error (Exit 101) by allowing older CMake scripts to run
-  CMAKE_ARGS: "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
-  # Silences the Node.js deprecation warning
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   build-osx:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-apple-darwin, aarch64-apple-darwin
 
+      # This intercepts the cmake call from the sdl2-sys crate and fixes the compatibility error
+      - name: Create CMake Wrapper
+        run: |
+          echo '#!/bin/bash' > /tmp/cmake-wrapper
+          echo 'cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.5 "$@"' >> /tmp/cmake-wrapper
+          chmod +x /tmp/cmake-wrapper
+
       - name: Build (x86_64)
         run: cargo build --target x86_64-apple-darwin --release
+        env:
+          CMAKE: /tmp/cmake-wrapper
 
       - name: Build (aarch64)
         run: cargo build --target aarch64-apple-darwin --release
+        env:
+          CMAKE: /tmp/cmake-wrapper
 
       - name: Create Universal Binary
         run: |
@@ -44,72 +50,187 @@ jobs:
         run: |
           mkdir -p touchHLE-dmg-src
           cp target/universal-apple-darwin/release/touchHLE touchHLE-dmg-src/
+          
           cp LICENSE touchHLE-dmg-src/ 2>/dev/null || true
           cp README.md touchHLE-dmg-src/ 2>/dev/null || true
+          cp CHANGELOG.md touchHLE-dmg-src/ 2>/dev/null || true
+          
           hdiutil create -volname touchHLE -srcfolder touchHLE-dmg-src -ov -format UDZO touchHLE_macOS_universal.dmg
 
-      - name: Upload macOS Universal
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: touchHLE_macOS_universal
           path: touchHLE_macOS_universal.dmg
+          
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TestApp_built_on_macOS
+          path: tests/TestApp.app
 
   build-android:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Try to get cached copy of Boost
-        id: cache-boost
-        uses: actions/cache@v3
-        with:
-          path: vendor/boost
-          key: boost_1_81_0
-
-      - if: ${{ steps.cache-boost.outputs.cache-hit != 'true' }}
-        name: Download and Extract Boost
-        run: |
-          curl -L -o boost.7z "https://archives.boost.io/release/1.81.0/source/boost_1_81_0.7z"
-          7z -ovendor x boost.7z && mv vendor/boost_1_81_0 vendor/boost
-
-      - name: Setup Android NDK & Rust
-        run: |
-          rustup target add aarch64-linux-android
-          cargo install cargo-ndk@3.5.4
-
-      - name: Build for Android
-        run: |
-          cd android
-          # Replace with your specific gradle path if different
-          ./gradlew assembleRelease 
-          mv app/build/outputs/apk/release/app-release.apk ../touchHLE.apk
-        env:
-          ANDROID_NDK_ROOT: ${{ env.ANDROID_NDK_LATEST_HOME }}
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: touchHLE_Android_AArch64
-          path: touchHLE.apk
+    - name: Checkout touchHLE
+      shell: bash
+      run: |
+        mkdir -p "$GITHUB_WORKSPACE"
+        git clone https://github.com/touchHLE/touchHLE "$GITHUB_WORKSPACE"
+        cd "$GITHUB_WORKSPACE"
+        git fetch origin "$GITHUB_REF"
+        git checkout "$GITHUB_SHA"
+    - name: Check formatting
+      run: dev-scripts/format.sh --check
+    - name: Get Submodules
+      run: git submodule update --init
+    - name: Try to get cached copy of Boost
+      id: cache-boost
+      uses: actions/cache@v3
+      with:
+        path: vendor/boost
+        key: boost_1_81_0
+    - if: ${{ steps.cache-boost.outputs.cache-hit != 'true' }}
+      name: Download Boost
+      run: curl -L -o boost_1_81_0.7z "https://archives.boost.io/release/1.81.0/source/boost_1_81_0.7z"
+    - if: ${{ steps.cache-boost.outputs.cache-hit != 'true' }}
+      name: Extract Boost
+      run: 7z -ovendor x boost_1_81_0.7z && mv vendor/boost_1_81_0 vendor/boost
+    - name: Try to get cached copy of cmake
+      id: cache-cmake
+      uses: actions/cache@v3
+      with:
+        path: vendor/cmake
+        key: cmake_3_31_6_linux
+    - if: ${{ steps.cache-cmake.outputs.cache-hit != 'true' }}
+      name: Download Cmake
+      run: curl -L -O "https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-linux-x86_64.tar.gz"
+    - if: ${{ steps.cache-cmake.outputs.cache-hit != 'true' }}
+      name: Extract Cmake
+      run: tar xzvf "cmake-3.31.6-linux-x86_64.tar.gz" -C vendor && mv vendor/cmake-3.31.6-linux-x86_64 vendor/cmake
+    - name: Install AArch64 Android Rust toolchain
+      run: rustup target add aarch64-linux-android
+    - name: Install cargo-ndk
+      run: cargo install cargo-ndk@3.5.4
+    - name: Try to get a cached copy of Gradle
+      id: cache-gradle
+      uses: actions/cache@v3
+      with:
+        path: gradle
+        key: gradle-8.11.1
+    - if: ${{ steps.cache-gradle.outputs.cache-hit != 'true' }}
+      name: Download Gradle
+      run: curl -L -o gradle-8.11.1-bin.zip "https://services.gradle.org/distributions/gradle-8.11.1-bin.zip"
+    - if: ${{ steps.cache-gradle.outputs.cache-hit != 'true' }}
+      name: Extract Gradle
+      run: 7z -ogradle x gradle-8.11.1-bin.zip
+    - name: Try to get a cached copy of Android NDK
+      id: cache-android-ndk
+      uses: actions/cache@v3
+      with:
+        path: android-ndk
+        key: android-ndk-r25c
+    - if: ${{ steps.cache-android-ndk.outputs.cache-hit != 'true' }}
+      name: Download Android NDK
+      run: curl -L -o android-ndk-r25c-linux.zip "https://dl.google.com/android/repository/android-ndk-r25c-linux.zip"
+    - if: ${{ steps.cache-android-ndk.outputs.cache-hit != 'true' }}
+      name: Extract Android NDK
+      run: 7z -oandroid-ndk -snld x android-ndk-r25c-linux.zip
+    - name: Link Android NDK
+      run: ln -s $PWD'/android-ndk/android-ndk-r25c' $ANDROID_SDK_ROOT'/ndk/25.2.9519653'
+    - name: Generate local.properties file
+      run: echo 'sdk.dir='$ANDROID_SDK_ROOT > android/local.properties
+    - name: Lint
+      run: dev-scripts/lint.sh ndk -t arm64-v8a
+      env:
+        ANDROID_NDK_ROOT: '/usr/local/lib/android/sdk/ndk/25.2.9519653'
+        ANDROID_NDK: '/usr/local/lib/android/sdk/ndk/25.2.9519653'
+        ANDROID_NDK_HOME: '/usr/local/lib/android/sdk/ndk/25.2.9519653'
+        CMAKE: ${{ github.workspace }}/vendor/cmake/bin/cmake
+    - name: Build for Android
+      run: cd android && ../gradle/gradle-8.11.1/bin/gradle assembleRelease && mv app/build/outputs/apk/release/app-release.apk ../touchHLE.apk
+      env:
+        ANDROID_NDK_ROOT: '/usr/local/lib/android/sdk/ndk/25.2.9519653'
+        CMAKE: ${{ github.workspace }}/vendor/cmake/bin/cmake
+    - uses: actions/upload-artifact@v4
+      with:
+        name: touchHLE_Android_AArch64
+        path: touchHLE.apk
 
   build-win:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Build
-        run: cargo build --release
-        env:
-          CMAKE: cmake
-
-      - name: Create bundle
-        shell: bash
-        run: cd dev-scripts && ./make-windows-bundle.sh ../target/release/touchHLE.exe && mv touchHLE_windows_bundle/ ..
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: touchHLE_Windows_x86_64
-          path: touchHLE_windows_bundle/
+    - name: Checkout touchHLE
+      shell: bash
+      run: |
+        mkdir -p "$GITHUB_WORKSPACE"
+        git clone https://github.com/touchHLE/touchHLE "$GITHUB_WORKSPACE"
+        cd "$GITHUB_WORKSPACE"
+        git fetch origin "$GITHUB_REF"
+        git checkout "$GITHUB_SHA"
+    - name: Check formatting
+      shell: bash
+      run: dev-scripts/format.sh --check
+    - name: Get Submodules
+      run: git submodule update --init
+    - name: Try to get cached copy of Boost
+      id: cache-boost
+      uses: actions/cache@v3
+      with:
+        path: vendor\boost
+        key: boost_1_81_0
+    - if: ${{ steps.cache-boost.outputs.cache-hit != 'true' }}
+      name: Download Boost
+      run: curl -L -o boost_1_81_0.7z "https://archives.boost.io/release/1.81.0/source/boost_1_81_0.7z"
+    - if: ${{ steps.cache-boost.outputs.cache-hit != 'true' }}
+      name: Extract Boost
+      run: 7z -ovendor x boost_1_81_0.7z && ren vendor\boost_1_81_0 boost
+    - name: Try to get cached copy of cmake
+      id: cache-cmake
+      uses: actions/cache@v3
+      with:
+        path: vendor/cmake
+        key: cmake_3_31_6_windows
+    - if: ${{ steps.cache-cmake.outputs.cache-hit != 'true' }}
+      name: Download Cmake
+      run: curl -L -O "https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-windows-x86_64.zip"
+    - if: ${{ steps.cache-cmake.outputs.cache-hit != 'true' }}
+      name: Extract Cmake
+      run: 7z -ovendor x "cmake-3.31.6-windows-x86_64.zip" && ren vendor\cmake-3.31.6-windows-x86_64 cmake
+    - name: Lint
+      shell: bash
+      run: dev-scripts/lint.sh
+      env:
+        CMAKE: ${{ github.workspace }}\vendor\cmake\bin\cmake
+    - name: Try to get cached copy of LLVM
+      id: cache-llvm
+      uses: actions/cache@v3
+      with:
+        path: tests/llvm
+        key: llvm_12_0_1_Windows_x64
+    - if: ${{ steps.cache-llvm.outputs.cache-hit != 'true' }}
+      name: Download LLVM
+      run: curl -L -O "https://github.com/llvm/llvm-project/releases/download/llvmorg-12.0.1/LLVM-12.0.1-win64.exe"
+    - if: ${{ steps.cache-llvm.outputs.cache-hit != 'true' }}
+      name: Extract LLVM
+      run: 7z -otests/llvm x LLVM-12.0.1-win64.exe
+    - name: Get copy of common-3.0-sdk
+      run: cd ${{ github.workspace }}/tests && curl -L --output ${{ runner.temp }}\sdk.tar.gz https://github.com/touchHLE/common-3.0-sdk/releases/latest/download/common-3.0.sdk-windows-x86_64.tar.gz && tar xzvf ${{ runner.temp }}\sdk.tar.gz
+    - name: Test
+      run: cargo test
+      env:
+        CMAKE: ${{ github.workspace }}\vendor\cmake\bin\cmake
+    - name: Build
+      run: cargo build --release
+      env:
+        CMAKE: ${{ github.workspace }}\vendor\cmake\bin\cmake
+    - name: Create bundle
+      shell: bash
+      run: cd dev-scripts && ./make-windows-bundle.sh ../target/release/touchHLE.exe && mv touchHLE_windows_bundle/ ..
+    - uses: actions/upload-artifact@v4
+      with:
+        name: touchHLE_Windows_x86_64
+        path: touchHLE_windows_bundle/
+    - uses: actions/upload-artifact@v4
+      with:
+        name: TestApp_built_on_Windows
+        path: tests/TestApp.app
