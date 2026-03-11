@@ -13,112 +13,120 @@ env:
 
 jobs:
   build-osx:
-    runs-on: macos-latest
-    steps:
-      - name: Checkout touchHLE
-        shell: bash
-        run: |
-          mkdir -p "$GITHUB_WORKSPACE"
-          # Dynamically clone the repository that triggered this action (your fork)
-          git clone "https://github.com/${{ github.repository }}" "$GITHUB_WORKSPACE"
-          cd "$GITHUB_WORKSPACE"
-          git fetch origin "$GITHUB_REF"
-          git checkout "$GITHUB_SHA"
-      - name: Install clang-format
-        run: brew install clang-format
-      - name: Check formatting
-        run: dev-scripts/format.sh --check
-      - name: Get Submodules
-        run: git submodule update --init
-      - name: Install Boost
-        run: brew install boost
-      - name: Try to get cached copy of cmake
-        id: cache-cmake
-        uses: actions/cache@v3
-        with:
-          path: vendor/cmake
-          key: cmake_3_31_6_macos
-      - if: ${{ steps.cache-cmake.outputs.cache-hit != 'true' }}
-        name: Download Cmake
-        run: curl -L -O "https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-macos-universal.tar.gz"
-      - if: ${{ steps.cache-cmake.outputs.cache-hit != 'true' }}
-        name: Extract Cmake
-        run: tar xzvf "cmake-3.31.6-macos-universal.tar.gz" -C vendor && mv "vendor/cmake-3.31.6-macos-universal/CMake.app/Contents/" vendor/cmake && rm -rf vendor/cmake-3.31.6-macos-universal
-
-      # Fix for CMake 3.31+ compatibility
-      - name: Create CMake Wrapper
-        run: |
-          echo '#!/bin/bash' > /tmp/cmake-wrapper
-          echo 'cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.5 "$@"' >> /tmp/cmake-wrapper
-          chmod +x /tmp/cmake-wrapper
-
-      - name: Lint
-        run: dev-scripts/lint.sh
-        env:
-          CMAKE: ${{ github.workspace }}/vendor/cmake/bin/cmake
-      - name: Try to get cached copy of LLVM
-        id: cache-llvm
-        uses: actions/cache@v3
-        with:
-          path: tests/llvm
-          key: llvm_12_0_0_macOS_x64
-      - if: ${{ steps.cache-llvm.outputs.cache-hit != 'true' }}
-        name: Download LLVM
-        run: curl -L -O "https://github.com/llvm/llvm-project/releases/download/llvmorg-12.0.0/clang+llvm-12.0.0-x86_64-apple-darwin.tar.xz"
-      - if: ${{ steps.cache-llvm.outputs.cache-llvm.outputs.cache-hit != 'true' }}
-        name: Extract LLVM
-        run: tar -xf clang+llvm-12.0.0-x86_64-apple-darwin.tar.xz && mkdir tests/llvm && mv clang+llvm-12.0.0-x86_64-apple-darwin/* tests/llvm
-      - name: Get copy of common-3.0-sdk
-        run: cd ${{ github.workspace }}/tests && curl -L https://github.com/touchHLE/common-3.0-sdk/releases/latest/download/common-3.0.sdk-macOS-universal.tar.gz | tar xzv
-      
-      - name: Install Targets
-        run: |
-          rustup target add x86_64-apple-darwin
-          rustup target add aarch64-apple-darwin
-
-      - name: Test (x86_64)
-        run: cargo test --target x86_64-apple-darwin
-        env:
-          CMAKE: /tmp/cmake-wrapper
-
-      - name: Sanity check tests
-        run: cc tests/TestApp_source/cli_tests.m tests/TestApp_source/CGAffineTransform.c tests/TestApp_source/SyncTester.m tests/TestApp_source/RespondsToSelector.m -framework CoreFoundation -framework Foundation -framework CoreGraphics -DDEFINE_ME_WHEN_BUILDING_ON_MACOS -DTestApp_cli_tests_main=main -ObjC && ./a.out
-      
-      - name: Build (x86_64)
-        run: cargo build --target x86_64-apple-darwin --release
-        env:
-          CMAKE: /tmp/cmake-wrapper
-
-      - name: Build (aarch64)
-        run: cargo build --target aarch64-apple-darwin --release
-        env:
-          CMAKE: /tmp/cmake-wrapper
-
-      - name: Create Universal Binary
-        run: |
-          mkdir -p target/universal-apple-darwin/release
-          lipo -create -output target/universal-apple-darwin/release/touchHLE \
-            target/x86_64-apple-darwin/release/touchHLE \
-            target/aarch64-apple-darwin/release/touchHLE
-
-      - name: Create .app bundle
-        run: |
-          cd dev-scripts
-          ./make-macos-bundle.sh ../target/universal-apple-darwin/release/touchHLE "`cargo run --package touchHLE_version`" "`cargo run --package touchHLE_version -- --branding`"
-          mkdir touchHLE-dmg-src
-          mv *.app touchHLE-dmg-src/
-          hdiutil create -volname touchHLE -srcfolder touchHLE-dmg-src touchHLE_universal.dmg
-          mv touchHLE_universal.dmg ..
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: touchHLE_macOS_universal
-          path: touchHLE_universal.dmg
-      - uses: actions/upload-artifact@v4
-        with:
-          name: TestApp_built_on_macOS
-          path: tests/TestApp.app
-
+      runs-on: macos-latest
+      steps:
+        - name: Checkout touchHLE
+          shell: bash
+          run: |
+            mkdir -p "$GITHUB_WORKSPACE"
+            git clone "https://github.com/${{ github.repository }}" "$GITHUB_WORKSPACE"
+            cd "$GITHUB_WORKSPACE"
+            git fetch origin "$GITHUB_REF"
+            git checkout "$GITHUB_SHA"
+        - name: Install clang-format
+          run: brew install clang-format
+        - name: Check formatting
+          run: dev-scripts/format.sh --check
+        - name: Get Submodules
+          run: git submodule update --init
+        - name: Install Boost
+          run: brew install boost
+        - name: Try to get cached copy of cmake
+          id: cache-cmake
+          uses: actions/cache@v3
+          with:
+            path: vendor/cmake
+            key: cmake_3_31_6_macos
+        - if: ${{ steps.cache-cmake.outputs.cache-hit != 'true' }}
+          name: Download Cmake
+          run: curl -L -O "https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-macos-universal.tar.gz"
+        - if: ${{ steps.cache-cmake.outputs.cache-hit != 'true' }}
+          name: Extract Cmake
+          run: tar xzvf "cmake-3.31.6-macos-universal.tar.gz" -C vendor && mv "vendor/cmake-3.31.6-macos-universal/CMake.app/Contents/" vendor/cmake && rm -rf vendor/cmake-3.31.6-macos-universal
+  
+        # SMART WRAPPER: Only adds the policy fix if we are NOT in --build mode
+        - name: Create CMake Wrapper
+          run: |
+            cat << 'EOF' > /tmp/cmake-wrapper
+            #!/bin/bash
+            if [[ "$*" == *"--build"* ]]; then
+              exec cmake "$@"
+            else
+              exec cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.5 "$@"
+            fi
+            EOF
+            chmod +x /tmp/cmake-wrapper
+  
+        - name: Lint
+          run: dev-scripts/lint.sh
+          env:
+            CMAKE: ${{ github.workspace }}/vendor/cmake/bin/cmake
+        - name: Try to get cached copy of LLVM
+          id: cache-llvm
+          uses: actions/cache@v3
+          with:
+            path: tests/llvm
+            key: llvm_12_0_0_macOS_x64
+        - if: ${{ steps.cache-llvm.outputs.cache-hit != 'true' }}
+          name: Download LLVM
+          run: curl -L -O "https://github.com/llvm/llvm-project/releases/download/llvmorg-12.0.0/clang+llvm-12.0.0-x86_64-apple-darwin.tar.xz"
+        - if: ${{ steps.cache-llvm.outputs.cache-hit != 'true' }}
+          name: Extract LLVM
+          run: tar -xf clang+llvm-12.0.0-x86_64-apple-darwin.tar.xz && mkdir tests/llvm && mv clang+llvm-12.0.0-x86_64-apple-darwin/* tests/llvm
+        - name: Get copy of common-3.0-sdk
+          run: cd ${{ github.workspace }}/tests && curl -L https://github.com/touchHLE/common-3.0-sdk/releases/latest/download/common-3.0.sdk-macOS-universal.tar.gz | tar xzv
+        
+        - name: Install Targets
+          run: |
+            rustup target add x86_64-apple-darwin
+            rustup target add aarch64-apple-darwin
+  
+        - name: Test (x86_64)
+          run: cargo test --target x86_64-apple-darwin
+          env:
+            CMAKE: /tmp/cmake-wrapper
+            BOOST_ROOT: /opt/homebrew/opt/boost
+  
+        - name: Sanity check tests
+          run: cc tests/TestApp_source/cli_tests.m tests/TestApp_source/CGAffineTransform.c tests/TestApp_source/SyncTester.m tests/TestApp_source/RespondsToSelector.m -framework CoreFoundation -framework Foundation -framework CoreGraphics -DDEFINE_ME_WHEN_BUILDING_ON_MACOS -DTestApp_cli_tests_main=main -ObjC && ./a.out
+        
+        - name: Build (x86_64)
+          run: cargo build --target x86_64-apple-darwin --release
+          env:
+            CMAKE: /tmp/cmake-wrapper
+            BOOST_ROOT: /opt/homebrew/opt/boost
+  
+        - name: Build (aarch64)
+          run: cargo build --target aarch64-apple-darwin --release
+          env:
+            CMAKE: /tmp/cmake-wrapper
+            BOOST_ROOT: /opt/homebrew/opt/boost
+  
+        - name: Create Universal Binary
+          run: |
+            mkdir -p target/universal-apple-darwin/release
+            lipo -create -output target/universal-apple-darwin/release/touchHLE \
+              target/x86_64-apple-darwin/release/touchHLE \
+              target/aarch64-apple-darwin/release/touchHLE
+  
+        - name: Create .app bundle
+          run: |
+            cd dev-scripts
+            ./make-macos-bundle.sh ../target/universal-apple-darwin/release/touchHLE "`cargo run --package touchHLE_version`" "`cargo run --package touchHLE_version -- --branding`"
+            mkdir touchHLE-dmg-src
+            mv *.app touchHLE-dmg-src/
+            hdiutil create -volname touchHLE -srcfolder touchHLE-dmg-src touchHLE_universal.dmg
+            mv touchHLE_universal.dmg ..
+  
+        - uses: actions/upload-artifact@v4
+          with:
+            name: touchHLE_macOS_universal
+            path: touchHLE_universal.dmg
+        - uses: actions/upload-artifact@v4
+          with:
+            name: TestApp_built_on_macOS
+            path: tests/TestApp.app
+            
   build-android:
     runs-on: ubuntu-latest
     steps:
