@@ -24,10 +24,9 @@ Only use touchHLE to emulate software you have obtained legally.
 
 ## Platform support
 
-* Officially supported: x64 Windows, x64 macOS and AArch64 Android.
+* Officially supported: x64 Windows, x64 macOS, AArch64 macOS and AArch64 Android.
   * These are the platforms with binary releases.
-  * If you're an Apple Silicon Mac user, the x64 build reportedly works in Rosetta.
-* Probably works, but you must build it yourself: AArch64 macOS, x64 Linux, AArch64 Linux.
+* Probably works, but you must build it yourself: x64 Linux, AArch64 Linux.
 * Never?: other architectures.
 
 Input methods:
